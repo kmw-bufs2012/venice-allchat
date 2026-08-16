@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { koreanDescription } from "@/lib/model-descriptions";
-import { veniceFetch, type TextModelInfo, type VeniceTextModel } from "@/lib/venice";
+import { translateToKorean, veniceFetch, type TextModelInfo, type VeniceTextModel } from "@/lib/venice";
 
 export const runtime = "nodejs";
+
+/**
+ * Server-side translation cache: { englishText -> koreanText }. Module-scope,
+ * so it survives between invocations of a warm serverless instance and cuts
+ * translation to roughly one LLM call per cold start (≈$0.003).
+ */
+const translationCache = new Map<string, string>();
+const TRANSLATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const translationCacheAt = { value: 0 };
 
 interface VeniceModelsResponse {
   data?: VeniceTextModel[];
@@ -31,6 +40,28 @@ export async function GET() {
         uncensored: spec?.uncensored === true || m.uncensored === true,
       };
     });
+
+    // Real-time translation: anything not already covered by the cache goes
+    // to ONE batched Venice call. On failure the pattern-based Korean (or
+    // English) fallback already baked into `description` stays in place.
+    const cacheFresh = Date.now() - translationCacheAt.value < TRANSLATION_CACHE_TTL_MS;
+    if (!cacheFresh) {
+      const toTranslate = [...new Set(models.map((m) => m.descriptionEn).filter((d): d is string => !!d))];
+      const translated = await translateToKorean(
+        toTranslate,
+        models.map((m) => ({ id: m.id, traits: m.traits })),
+      );
+      if (translated) {
+        toTranslate.forEach((en, i) => translationCache.set(en, translated[i] ?? en));
+        translationCacheAt.value = Date.now();
+      }
+    }
+    for (const m of models) {
+      if (m.descriptionEn && translationCache.has(m.descriptionEn)) {
+        m.description = translationCache.get(m.descriptionEn) as string;
+      }
+    }
+
     models.sort((a, b) => a.name.localeCompare(b.name));
     return NextResponse.json({ source: "live", models });
   } catch (err) {

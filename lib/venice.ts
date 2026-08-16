@@ -49,3 +49,59 @@ export interface TextModelInfo {
   contextWindow: number | null;
   uncensored: boolean;
 }
+
+/**
+ * Translates a batch of short strings to Korean in ONE chat call using the
+ * cheapest available model. ~4k tokens per refresh at llama-3.2-3b pricing
+ * (≈$0.003); callers cache the result, so this runs about once a day.
+ * Returns null on any failure so callers fall back to static translations.
+ */
+export async function translateToKorean(
+  texts: string[],
+  candidateModels: { id: string; traits: string[] }[],
+): Promise<string[] | null> {
+  if (texts.length === 0) return [];
+
+  const translator =
+    candidateModels.find((m) => m.traits.includes("fastest")) ??
+    candidateModels.find((m) => /llama-3\.(2-3b|1-8b)|gemma|phi|(^|-)(3b|7b|8b)(-|$)/i.test(m.id)) ??
+    candidateModels[0];
+  if (!translator) return null;
+
+  try {
+    const res = await fetch(`${BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${requireVeniceKey()}`,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(20_000),
+      body: JSON.stringify({
+        model: translator.id,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a translator. The user sends a JSON array of short English AI model descriptions. " +
+              "Reply with ONLY a JSON array of the same length: natural, concise Korean translations. " +
+              "Keep proper nouns (Llama, DeepSeek, Qwen…) as-is. No markdown, no commentary.",
+          },
+          { role: "user", content: JSON.stringify(texts) },
+        ],
+      }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    let content = body.choices?.[0]?.message?.content?.trim();
+    if (!content) return null;
+    content = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed) && parsed.length === texts.length && parsed.every((s) => typeof s === "string")) {
+      return parsed as string[];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
