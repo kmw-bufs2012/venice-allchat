@@ -23,7 +23,10 @@ export async function GET() {
         description: m.description ?? "",
         traits,
         contextWindow: m.availableContextWindow ?? null,
-        uncensored: !traits.includes("system-safety-message"),
+        // Venice marks uncensored models with the "uncensored" trait.
+        // The "system-safety-message" trait only means Venice injects its
+        // default system prompt — it says nothing about censorship either way.
+        uncensored: traits.includes("uncensored"),
       };
     });
     models.sort((a, b) => a.name.localeCompare(b.name));
