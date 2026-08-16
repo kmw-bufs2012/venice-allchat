@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { koreanDescription } from "@/lib/model-descriptions";
 import { veniceFetch, type TextModelInfo, type VeniceTextModel } from "@/lib/venice";
 
 export const runtime = "nodejs";
@@ -17,10 +18,12 @@ export async function GET() {
     const body = await veniceFetch<VeniceModelsResponse>("/models?type=text", {});
     const models: TextModelInfo[] = (body.data ?? []).map((m) => {
       const spec = m.model_spec;
+      const englishDescription = spec?.description ?? m.description ?? "";
       return {
         id: m.id,
         name: spec?.name ?? m.name ?? m.id,
-        description: spec?.description ?? m.description ?? "",
+        description: koreanDescription(m.id, englishDescription),
+        descriptionEn: englishDescription,
         traits: spec?.traits ?? [],
         contextWindow: spec?.availableContextTokens ?? m.availableContextWindow ?? m.context_length ?? null,
         // Venice exposes uncensored status as a dedicated boolean field

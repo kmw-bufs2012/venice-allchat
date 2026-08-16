@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { traitLabel } from "@/lib/model-descriptions";
 
 interface TextModelInfo {
   id: string;
   name: string;
   description: string;
+  descriptionEn?: string;
   traits: string[];
   contextWindow: number | null;
   uncensored: boolean;
@@ -20,6 +22,18 @@ function modelLabel(m: TextModelInfo): string {
   const tag = m.uncensored ? " (무검열)" : "";
   const ctx = m.contextWindow ? ` · ${(m.contextWindow / 1000).toFixed(0)}k` : "";
   return `${m.name}${tag}${ctx}`;
+}
+
+/**
+ * Approximate token count. Venice exposes no tokenization endpoint, so we
+ * estimate: CJK characters (Korean/Chinese/Japanese) run ~1.1 tokens each in
+ * modern tokenizers, other text ~4 characters per token.
+ */
+function estimateTokens(text: string): number {
+  if (!text) return 0;
+  const cjk = (text.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/g) ?? []).length;
+  const rest = text.length - cjk;
+  return Math.ceil(cjk * 1.1 + rest / 4);
 }
 
 export default function ChatPage() {
@@ -138,6 +152,13 @@ export default function ChatPage() {
 
   const selected = models.find((m) => m.id === modelId);
 
+  const conversationTokens =
+    estimateTokens(systemPrompt) + messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+  const inputTokens = estimateTokens(input);
+  const totalTokens = conversationTokens + inputTokens;
+  const ctxLimit = selected?.contextWindow ?? null;
+  const nearLimit = ctxLimit !== null && totalTokens > ctxLimit * 0.9;
+
   return (
     <main style={{ maxWidth: 880 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -163,9 +184,13 @@ export default function ChatPage() {
           ))}
         </select>
         {modelsError && <p className="error">{modelsError}</p>}
-        {selected?.description && <p className="note">{selected.description}</p>}
+        {selected?.description && (
+          <p className="note" title={selected.descriptionEn || undefined}>
+            {selected.description}
+          </p>
+        )}
         {selected?.traits && selected.traits.length > 0 && (
-          <p className="note">traits: {selected.traits.join(", ")}</p>
+          <p className="note">{selected.traits.map(traitLabel).join(" · ")}</p>
         )}
 
         <label htmlFor="system">시스템 프롬프트 (선택)</label>
@@ -233,6 +258,11 @@ export default function ChatPage() {
           새 대화
         </button>
       </div>
+      <p className={`charcount${nearLimit ? " over" : ""}`} style={{ margin: "-14px 4px 0" }}>
+        예상 토큰 — 입력: 약 {inputTokens.toLocaleString()} · 대화 전체: 약 {totalTokens.toLocaleString()}
+        {ctxLimit !== null && ` / ${(ctxLimit / 1000).toFixed(0)}k`}
+        {nearLimit && " ⚠ 컨텍스트 거의 찼음 — 새 대화를 시작하세요"}
+      </p>
     </main>
   );
 }

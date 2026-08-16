@@ -44,6 +44,7 @@ export interface TextModelInfo {
   id: string;
   name: string;
   description: string;
+  descriptionEn?: string;
   traits: string[];
   contextWindow: number | null;
   uncensored: boolean;
