@@ -62,8 +62,9 @@ export default function ChatPage() {
         if (d.error) setModelsError(d.error);
         const list = d.models ?? [];
         setModels(list);
-        // Default pick: the user's last choice, then GLM 4.7 Flash Heretic
-        // (cheap uncensored reasoning), then any uncensored model, then first.
+        // Default pick: the user's last choice, then Qwen 3.6 Plus Uncensored
+        // (final pick: official uncensored tuning, 1M context, best long-form
+        // quality), then GLM 4.7 Flash Heretic as the budget fallback.
         let saved: string | null = null;
         try {
           saved = localStorage.getItem("preferredModel");
@@ -72,6 +73,7 @@ export default function ChatPage() {
         }
         const preferred =
           list.find((m) => m.id === saved) ??
+          list.find((m) => /qwen-3-6-plus/i.test(m.id) && m.uncensored) ??
           list.find((m) => /glm-4-7.*heretic|heretic.*glm-4-7/i.test(m.id)) ??
           list.find((m) => m.uncensored) ??
           list[0];
