@@ -11,11 +11,101 @@ interface TextModelInfo {
   traits: string[];
   contextWindow: number | null;
   uncensored: boolean;
+  supportsVision?: boolean;
+  supportsMultipleImages?: boolean;
+  supportsVideoInput?: boolean;
 }
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+interface ImageAttachment {
+  id: string;
+  name: string;
+  dataUrl: string;
+}
+
+interface VideoAttachment {
+  name: string;
+  frames: string[];
+}
+
+interface DocAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  dataUrl: string;
+  bytes: number;
+}
+
+type OutgoingPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "file"; file: { file_data: string; filename: string } };
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => (typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("read failed")));
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Downscale to ≤1024px JPEG so 9 images fit inside the ~4.5MB proxy limit. */
+async function fileToDownscaledDataUrl(file: File, maxDim = 1024, quality = 0.8): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", quality);
+  } finally {
+    bitmap.close();
+  }
+}
+
+/**
+ * Samples evenly-spaced frames from a video as JPEG data URLs. 50MB videos
+ * can't ride the ~4.5MB serverless proxy as raw base64, so vision models get
+ * the video the same way they consume it: as key frames.
+ */
+async function extractVideoFrames(file: File, count = 6): Promise<string[]> {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.src = URL.createObjectURL(file);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error("video load failed"));
+    });
+    const duration = Number.isFinite(video.duration) ? video.duration : 0;
+    const scale = Math.min(1, 1024 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round((video.videoWidth || 1024) * scale));
+    canvas.height = Math.max(1, Math.round((video.videoHeight || 1024) * scale));
+    const ctx = canvas.getContext("2d")!;
+    const frames: string[] = [];
+    for (let i = 0; i < count && duration > 0; i++) {
+      const t = Math.min((duration * (i + 0.5)) / count, duration - 0.05);
+      await new Promise<void>((resolve, reject) => {
+        video.onseeked = () => resolve();
+        video.onerror = () => reject(new Error("seek failed"));
+        video.currentTime = t;
+      });
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      frames.push(canvas.toDataURL("image/jpeg", 0.8));
+    }
+    return frames;
+  } finally {
+    URL.revokeObjectURL(video.src);
+  }
 }
 
 function modelLabel(m: TextModelInfo): string {
@@ -47,7 +137,14 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [video, setVideo] = useState<VideoAttachment | null>(null);
+  const [docs, setDocs] = useState<DocAttachment[]>([]);
+  const [attachBusy, setAttachBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const imgInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
+  const docInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem("theme");
@@ -110,18 +207,91 @@ export default function ChatPage() {
     window.location.replace("/login");
   }
 
+  async function handleImages(files: FileList | null) {
+    if (!files) return;
+    setAttachBusy(true);
+    try {
+      const room = 9 - images.length;
+      const next: ImageAttachment[] = [];
+      for (const f of Array.from(files).slice(0, room)) {
+        if (!f.type.startsWith("image/")) continue;
+        try {
+          next.push({ id: crypto.randomUUID(), name: f.name, dataUrl: await fileToDownscaledDataUrl(f) });
+        } catch {
+          setChatError(`이미지 처리 실패: ${f.name}`);
+        }
+      }
+      if (next.length) setImages((prev) => [...prev, ...next].slice(0, 9));
+    } finally {
+      setAttachBusy(false);
+    }
+  }
+
+  async function handleVideo(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 50 * 1024 * 1024) {
+      setChatError("동영상은 50MB 이하만 첨부할 수 있습니다.");
+      return;
+    }
+    setAttachBusy(true);
+    try {
+      const frames = await extractVideoFrames(file, 6);
+      setVideo({ name: file.name, frames });
+    } catch {
+      setChatError("동영상 프레임 추출에 실패했습니다.");
+    } finally {
+      setAttachBusy(false);
+    }
+  }
+
+  async function handleDocs(files: FileList | null) {
+    if (!files) return;
+    const next: DocAttachment[] = [];
+    for (const f of Array.from(files).slice(0, 5 - docs.length)) {
+      if (!/\.(txt|md|pdf)$/i.test(f.name)) continue;
+      if (f.size > 3 * 1024 * 1024) {
+        setChatError(`문서는 3MB 이하만 첨부할 수 있습니다: ${f.name}`);
+        continue;
+      }
+      try {
+        const dataUrl = await readAsDataUrl(f);
+        const mime = f.type || (f.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "text/plain");
+        next.push({ id: crypto.randomUUID(), name: f.name, mime, dataUrl, bytes: f.size });
+      } catch {
+        setChatError(`문서 읽기 실패: ${f.name}`);
+      }
+    }
+    if (next.length) setDocs((prev) => [...prev, ...next].slice(0, 5));
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || !modelId || streaming) return;
+    const hasAttachments = images.length > 0 || video !== null || docs.length > 0;
+    if ((!text && !hasAttachments) || !modelId || streaming) return;
     setInput("");
     setChatError(null);
-    const history = [...messages, { role: "user" as const, content: text }];
+
+    // Attachments ride only the outgoing message as content parts; history
+    // keeps plain text so old images/docs aren't re-uploaded every turn.
+    const parts: OutgoingPart[] = [];
+    const finalText = text || "(첨부 파일을 참고해 답변하세요)";
+    parts.push({ type: "text", text: finalText });
+    for (const img of images) parts.push({ type: "image_url", image_url: { url: img.dataUrl } });
+    if (video) {
+      for (const frame of video.frames) parts.push({ type: "image_url", image_url: { url: frame } });
+    }
+    for (const d of docs) parts.push({ type: "file", file: { file_data: d.dataUrl, filename: d.name } });
+
+    const history = [...messages, { role: "user" as const, content: finalText }];
     setMessages([...history, { role: "assistant", content: "" }]);
     setStreaming(true);
 
-    const payloadMessages = systemPrompt.trim()
-      ? [{ role: "system", content: systemPrompt.trim() }, ...history]
-      : history;
+    const priorTurns = history.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+    const payloadMessages: Array<{ role: string; content: string | OutgoingPart[] }> = [
+      ...(systemPrompt.trim() ? [{ role: "system", content: systemPrompt.trim() }] : []),
+      ...priorTurns,
+      { role: "user", content: parts },
+    ];
 
     try {
       const res = await fetch("/api/chat", {
@@ -164,6 +334,10 @@ export default function ChatPage() {
       if (!acc) {
         setMessages([...history, { role: "assistant", content: "(응답 없음)" }]);
       }
+      // Attachments are consumed by the completed request — clear for the next one.
+      setImages([]);
+      setVideo(null);
+      setDocs([]);
     } catch (err) {
       setChatError(err instanceof Error ? err.message : String(err));
       setMessages(history);
@@ -174,12 +348,22 @@ export default function ChatPage() {
 
   const selected = models.find((m) => m.id === modelId);
 
+  const visionCount = images.length + (video?.frames.length ?? 0);
+  // Images/video frames only make sense on models that can see.
+  const needsVision = visionCount > 0 && selected?.supportsVision !== true;
+  const multiImageNote = visionCount > 1 && selected?.supportsMultipleImages === false;
+
   const conversationTokens =
     estimateTokens(systemPrompt) + messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
   const inputTokens = estimateTokens(input);
-  const totalTokens = conversationTokens + inputTokens;
+  const attachmentTokens =
+    visionCount * 800 + docs.reduce((sum, d) => sum + Math.ceil(d.bytes * (d.mime.includes("pdf") ? 0.05 : 0.25)), 0);
+  const totalTokens = conversationTokens + inputTokens + attachmentTokens;
   const ctxLimit = selected?.contextWindow ?? null;
   const nearLimit = ctxLimit !== null && totalTokens > ctxLimit * 0.9;
+  const hasAttachments = images.length > 0 || video !== null || docs.length > 0;
+  const canSend =
+    !!modelId && !streaming && !attachBusy && !needsVision && (input.trim().length > 0 || hasAttachments);
 
   return (
     <main style={{ maxWidth: 880 }}>
@@ -263,36 +447,140 @@ export default function ChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="panel" style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          placeholder="메시지를 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)"
-          style={{ minHeight: 56, flex: 1, marginTop: 0 }}
-          disabled={streaming}
-        />
-        <button onClick={send} disabled={streaming || !input.trim() || !modelId} style={{ marginTop: 0 }}>
-          {streaming ? "응답 중…" : "전송"}
-        </button>
-        <button
-          onClick={() => {
-            setMessages([]);
-            setChatError(null);
-          }}
-          disabled={streaming || messages.length === 0}
-          style={{ marginTop: 0 }}
-        >
-          새 대화
-        </button>
+      <div className="panel" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => imgInputRef.current?.click()}
+            disabled={streaming || attachBusy || images.length >= 9}
+            style={{ marginTop: 0, padding: "6px 12px", fontSize: 12 }}
+          >
+            🖼 이미지 ({images.length}/9)
+          </button>
+          <button
+            type="button"
+            onClick={() => videoInputRef.current?.click()}
+            disabled={streaming || attachBusy || video !== null}
+            style={{ marginTop: 0, padding: "6px 12px", fontSize: 12 }}
+          >
+            🎬 동영상 {video ? "1/1" : "(≤50MB)"}
+          </button>
+          <button
+            type="button"
+            onClick={() => docInputRef.current?.click()}
+            disabled={streaming || attachBusy || docs.length >= 5}
+            style={{ marginTop: 0, padding: "6px 12px", fontSize: 12 }}
+          >
+            📄 문서 ({docs.length}/5)
+          </button>
+          <input
+            ref={imgInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              void handleImages(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            hidden
+            onChange={(e) => {
+              void handleVideo(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={docInputRef}
+            type="file"
+            accept=".txt,.md,.pdf"
+            multiple
+            hidden
+            onChange={(e) => {
+              void handleDocs(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </div>
+
+        {(images.length > 0 || video || docs.length > 0) && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {images.map((img) => (
+              <span key={img.id} className="attach-chip" title={img.name}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img.dataUrl} alt={img.name} />
+                <button type="button" className="chip-remove" onClick={() => setImages((p) => p.filter((x) => x.id !== img.id))}>
+                  ✕
+                </button>
+              </span>
+            ))}
+            {video && (
+              <span className="attach-chip wide" title={`${video.name} — 프레임 ${video.frames.length}장 추출`}>
+                🎬 {video.name} ({video.frames.length}프레임)
+                <button type="button" className="chip-remove" onClick={() => setVideo(null)}>
+                  ✕
+                </button>
+              </span>
+            )}
+            {docs.map((d) => (
+              <span key={d.id} className="attach-chip wide" title={d.name}>
+                📄 {d.name}
+                <button type="button" className="chip-remove" onClick={() => setDocs((p) => p.filter((x) => x.id !== d.id))}>
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {attachBusy && <p className="note" style={{ margin: 0 }}>첨부 처리 중…</p>}
+        {needsVision && (
+          <p className="error" style={{ margin: 0 }}>
+            선택한 모델은 이미지를 이해할 수 없습니다 — 비전 지원 모델(예: Qwen 3.6 Plus)을 선택하세요.
+          </p>
+        )}
+        {multiImageNote && (
+          <p className="note" style={{ margin: 0 }}>
+            이 모델은 여러 이미지 동시 처리가 제한적일 수 있습니다 — Qwen 3.6 Plus를 권장합니다.
+          </p>
+        )}
+
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            placeholder="메시지를 입력하세요 (Enter 전송, Shift+Enter 줄바꿈)"
+            style={{ minHeight: 56, flex: 1, marginTop: 0 }}
+            disabled={streaming}
+          />
+          <button onClick={send} disabled={!canSend} style={{ marginTop: 0 }}>
+            {streaming ? "응답 중…" : "전송"}
+          </button>
+          <button
+            onClick={() => {
+              setMessages([]);
+              setChatError(null);
+            }}
+            disabled={streaming || messages.length === 0}
+            style={{ marginTop: 0 }}
+          >
+            새 대화
+          </button>
+        </div>
       </div>
       <p className={`charcount${nearLimit ? " over" : ""}`} style={{ margin: "-14px 4px 0" }}>
-        예상 토큰 — 입력: 약 {inputTokens.toLocaleString()} · 대화 전체: 약 {totalTokens.toLocaleString()}
+        예상 토큰 — 입력: 약 {inputTokens.toLocaleString()}
+        {attachmentTokens > 0 && ` · 첨부: 약 ${attachmentTokens.toLocaleString()}`} · 대화 전체: 약 {totalTokens.toLocaleString()}
         {ctxLimit !== null && ` / ${(ctxLimit / 1000).toFixed(0)}k`}
         {nearLimit && " ⚠ 컨텍스트 거의 찼음 — 새 대화를 시작하세요"}
       </p>

@@ -35,6 +35,11 @@ export interface VeniceTextModel {
     tokenizer?: string;
     uncensored?: boolean;
     availableContextTokens?: number;
+    capabilities?: {
+      supportsVision?: boolean;
+      supportsMultipleImages?: boolean;
+      supportsVideoInput?: boolean;
+    };
   };
   availableContextWindow?: number;
   createdAt?: string;
@@ -48,4 +53,7 @@ export interface TextModelInfo {
   traits: string[];
   contextWindow: number | null;
   uncensored: boolean;
+  supportsVision?: boolean;
+  supportsMultipleImages?: boolean;
+  supportsVideoInput?: boolean;
 }

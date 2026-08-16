@@ -40,6 +40,10 @@ export async function GET(request: Request) {
         // Venice exposes uncensored status as a dedicated boolean field
         // (checked at both levels for API-version tolerance) — it is NOT a trait.
         uncensored: spec?.uncensored === true || m.uncensored === true,
+        supportsVision: spec?.capabilities?.supportsVision === true,
+        // Unspecified means "no known restriction" — only an explicit false gates the UI.
+        supportsMultipleImages: spec?.capabilities?.supportsMultipleImages !== false,
+        supportsVideoInput: spec?.capabilities?.supportsVideoInput === true,
       };
     });
 
