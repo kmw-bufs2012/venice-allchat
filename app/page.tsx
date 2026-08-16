@@ -17,9 +17,9 @@ interface ChatMessage {
 }
 
 function modelLabel(m: TextModelInfo): string {
+  const tag = m.uncensored ? " (무검열)" : "";
   const ctx = m.contextWindow ? ` · ${(m.contextWindow / 1000).toFixed(0)}k` : "";
-  const tag = m.uncensored ? " · 무검열" : "";
-  return `${m.name}${ctx}${tag}`;
+  return `${m.name}${tag}${ctx}`;
 }
 
 export default function ChatPage() {
