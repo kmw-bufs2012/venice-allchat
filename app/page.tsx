@@ -42,7 +42,7 @@ export default function ChatPage() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelId, setModelId] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [temperature, setTemperature] = useState(1.0);
+  const [temperature, setTemperature] = useState(0.9);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
