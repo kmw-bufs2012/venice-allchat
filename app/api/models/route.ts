@@ -22,7 +22,7 @@ interface VeniceModelsResponse {
  * The `uncensored` flag comes from Venice's own model traits so the UI can
  * badge them — the API key owner decides what is actually reachable.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const body = await veniceFetch<VeniceModelsResponse>("/models?type=text", {});
     const models: TextModelInfo[] = (body.data ?? []).map((m) => {
@@ -41,20 +41,32 @@ export async function GET() {
       };
     });
 
-    // Real-time translation: anything not already covered by the cache goes
-    // to ONE batched Venice call. On failure the pattern-based Korean (or
-    // English) fallback already baked into `description` stays in place.
+    // Sort first so the translator model pick (inside translateToKorean)
+    // sees a stable, name-ordered list.
+    models.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Real-time translation. The default (fast) response only merges cached
+    // translations; the client follows up with ?translate=1, which does the
+    // batched LLM call and returns the upgraded list. That keeps first paint
+    // fast while translations arrive a moment later. On failure the
+    // pattern-based Korean (or English) baked into `description` stays.
+    const wantsTranslation = new URL(request.url).searchParams.get("translate") === "1";
     const cacheFresh = Date.now() - translationCacheAt.value < TRANSLATION_CACHE_TTL_MS;
-    if (!cacheFresh) {
+    if (wantsTranslation && !cacheFresh) {
       const toTranslate = [...new Set(models.map((m) => m.descriptionEn).filter((d): d is string => !!d))];
       const translated = await translateToKorean(
         toTranslate,
         models.map((m) => ({ id: m.id, traits: m.traits })),
       );
-      if (translated) {
-        toTranslate.forEach((en, i) => translationCache.set(en, translated[i] ?? en));
-        translationCacheAt.value = Date.now();
-      }
+      let any = false;
+      toTranslate.forEach((en, i) => {
+        const ko = translated[i];
+        if (ko) {
+          translationCache.set(en, ko);
+          any = true;
+        }
+      });
+      if (any) translationCacheAt.value = Date.now();
     }
     for (const m of models) {
       if (m.descriptionEn && translationCache.has(m.descriptionEn)) {
@@ -62,7 +74,6 @@ export async function GET() {
       }
     }
 
-    models.sort((a, b) => a.name.localeCompare(b.name));
     return NextResponse.json({ source: "live", models });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

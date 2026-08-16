@@ -42,7 +42,7 @@ export default function ChatPage() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelId, setModelId] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [temperature, setTemperature] = useState(0.75);
+  const [temperature, setTemperature] = useState(1.0);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -53,6 +53,9 @@ export default function ChatPage() {
     const stored = localStorage.getItem("theme");
     if (stored === "light" || stored === "dark") setTheme(stored);
 
+    // Fast first paint with the model list (static Korean descriptions),
+    // then a background pass that upgrades descriptions with live LLM
+    // translation — the user can already pick a model meanwhile.
     fetch("/api/models")
       .then((r) => r.json())
       .then((d: { models?: TextModelInfo[]; error?: string }) => {
@@ -61,6 +64,11 @@ export default function ChatPage() {
         setModels(list);
         const preferred = list.find((m) => m.uncensored) ?? list[0];
         if (preferred) setModelId(preferred.id);
+        return fetch("/api/models?translate=1");
+      })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { models?: TextModelInfo[] } | null) => {
+        if (d?.models?.length) setModels(d.models);
       })
       .catch(() => setModelsError("모델 목록을 불러올 수 없습니다."));
   }, []);
