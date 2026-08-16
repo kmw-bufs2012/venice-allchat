@@ -52,7 +52,7 @@ export async function POST(request: Request) {
         Authorization: `Bearer ${requireVeniceKey()}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model, messages, temperature, stream: true, VeniceParameters: { include_venice_system_prompt: false } }),
+      body: JSON.stringify({ model, messages, temperature, stream: true, venice_parameters: { include_venice_system_prompt: false } }),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
