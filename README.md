@@ -18,6 +18,7 @@
 | 변수 | 설명 |
 |---|---|
 | `VENICE_API_KEY` | Venice.ai API 키 (필수) |
+| `DEEPL_API_KEY` | DeepL API 키 (선택) — 모델 설명을 원문 그대로 한국어 번역. 무료 키(`:fx`로 끝) 자동 인식 |
 | `APP_USERNAME` | 로그인 아이디 (선택) |
 | `APP_PASSWORD` | 로그인 비밀번호 (필수) |
 | `SESSION_SECRET` | 세션 서명 시크릿 (선택, 없으면 APP_PASSWORD 사용) |

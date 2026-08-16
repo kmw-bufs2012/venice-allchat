@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { koreanDescription } from "@/lib/model-descriptions";
-import { translateToKorean, veniceFetch, type TextModelInfo, type VeniceTextModel } from "@/lib/venice";
+import { deepLConfigured, translateWithDeepL } from "@/lib/deepl";
+import { veniceFetch, type TextModelInfo, type VeniceTextModel } from "@/lib/venice";
 
 export const runtime = "nodejs";
 
@@ -31,7 +31,9 @@ export async function GET(request: Request) {
       return {
         id: m.id,
         name: spec?.name ?? m.name ?? m.id,
-        description: koreanDescription(m.id, englishDescription),
+        // English original ships immediately; the translate pass swaps in
+        // the full DeepL translation (never an abridged version) afterwards.
+        description: englishDescription,
         descriptionEn: englishDescription,
         traits: spec?.traits ?? [],
         contextWindow: spec?.availableContextTokens ?? m.availableContextWindow ?? m.context_length ?? null,
@@ -45,19 +47,16 @@ export async function GET(request: Request) {
     // sees a stable, name-ordered list.
     models.sort((a, b) => a.name.localeCompare(b.name));
 
-    // Real-time translation. The default (fast) response only merges cached
-    // translations; the client follows up with ?translate=1, which does the
-    // batched LLM call and returns the upgraded list. That keeps first paint
-    // fast while translations arrive a moment later. On failure the
-    // pattern-based Korean (or English) baked into `description` stays.
+    // Real-time translation via DeepL. The default (fast) response only
+    // merges cached translations; the client follows up with ?translate=1,
+    // which runs the batched DeepL call and returns the upgraded list. First
+    // paint stays fast, and DeepL translates the complete original text.
+    // Without DEEPL_API_KEY (or on failure) the English original stays.
     const wantsTranslation = new URL(request.url).searchParams.get("translate") === "1";
     const cacheFresh = Date.now() - translationCacheAt.value < TRANSLATION_CACHE_TTL_MS;
-    if (wantsTranslation && !cacheFresh) {
+    if (wantsTranslation && deepLConfigured() && !cacheFresh) {
       const toTranslate = [...new Set(models.map((m) => m.descriptionEn).filter((d): d is string => !!d))];
-      const translated = await translateToKorean(
-        toTranslate,
-        models.map((m) => ({ id: m.id, traits: m.traits })),
-      );
+      const translated = await translateWithDeepL(toTranslate);
       let any = false;
       toTranslate.forEach((en, i) => {
         const ko = translated[i];
