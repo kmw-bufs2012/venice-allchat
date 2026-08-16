@@ -62,7 +62,19 @@ export default function ChatPage() {
         if (d.error) setModelsError(d.error);
         const list = d.models ?? [];
         setModels(list);
-        const preferred = list.find((m) => m.uncensored) ?? list[0];
+        // Default pick: the user's last choice, then GLM 4.7 Flash Heretic
+        // (cheap uncensored reasoning), then any uncensored model, then first.
+        let saved: string | null = null;
+        try {
+          saved = localStorage.getItem("preferredModel");
+        } catch {
+          // private mode etc. — fall through to the default chain
+        }
+        const preferred =
+          list.find((m) => m.id === saved) ??
+          list.find((m) => /glm-4-7.*heretic|heretic.*glm-4-7/i.test(m.id)) ??
+          list.find((m) => m.uncensored) ??
+          list[0];
         if (preferred) setModelId(preferred.id);
         return fetch("/api/models?translate=1");
       })
@@ -184,7 +196,18 @@ export default function ChatPage() {
 
       <div className="panel" style={{ paddingBottom: 14 }}>
         <label htmlFor="model">모델 ({models.length}개)</label>
-        <select id="model" value={modelId} onChange={(e) => setModelId(e.target.value)}>
+        <select
+          id="model"
+          value={modelId}
+          onChange={(e) => {
+            setModelId(e.target.value);
+            try {
+              localStorage.setItem("preferredModel", e.target.value);
+            } catch {
+              // storage unavailable — selection just won't persist
+            }
+          }}
+        >
           {models.map((m) => (
             <option key={m.id} value={m.id}>
               {modelLabel(m)}
