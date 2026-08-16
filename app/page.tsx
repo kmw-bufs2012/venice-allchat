@@ -41,7 +41,7 @@ export default function ChatPage() {
   const [models, setModels] = useState<TextModelInfo[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [modelId, setModelId] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("당신은 도움이 되는 한국어 어시스턴트입니다. 모든 답변은 한국어로만 답변하십시오.");
   const [temperature, setTemperature] = useState(0.9);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -231,7 +231,7 @@ export default function ChatPage() {
           id="system"
           value={systemPrompt}
           onChange={(e) => setSystemPrompt(e.target.value)}
-          placeholder="예: 당신은 도움이 되는 한국어 어시스턴트입니다."
+          placeholder="입력하지 않으면 시스템 프롬프트 없이 진행됩니다."
           style={{ minHeight: 60 }}
         />
 
