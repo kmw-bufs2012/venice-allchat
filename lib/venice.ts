@@ -26,7 +26,16 @@ export interface VeniceTextModel {
   id: string;
   name?: string;
   description?: string;
-  model_spec?: { traits?: string[]; tokenizer?: string };
+  uncensored?: boolean;
+  context_length?: number;
+  model_spec?: {
+    name?: string;
+    description?: string;
+    traits?: string[];
+    tokenizer?: string;
+    uncensored?: boolean;
+    availableContextTokens?: number;
+  };
   availableContextWindow?: number;
   createdAt?: string;
 }

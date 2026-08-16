@@ -16,17 +16,16 @@ export async function GET() {
   try {
     const body = await veniceFetch<VeniceModelsResponse>("/models?type=text", {});
     const models: TextModelInfo[] = (body.data ?? []).map((m) => {
-      const traits = m.model_spec?.traits ?? [];
+      const spec = m.model_spec;
       return {
         id: m.id,
-        name: m.name ?? m.id,
-        description: m.description ?? "",
-        traits,
-        contextWindow: m.availableContextWindow ?? null,
-        // Venice marks uncensored models with the "uncensored" trait.
-        // The "system-safety-message" trait only means Venice injects its
-        // default system prompt — it says nothing about censorship either way.
-        uncensored: traits.includes("uncensored"),
+        name: spec?.name ?? m.name ?? m.id,
+        description: spec?.description ?? m.description ?? "",
+        traits: spec?.traits ?? [],
+        contextWindow: spec?.availableContextTokens ?? m.availableContextWindow ?? m.context_length ?? null,
+        // Venice exposes uncensored status as a dedicated boolean field
+        // (checked at both levels for API-version tolerance) — it is NOT a trait.
+        uncensored: spec?.uncensored === true || m.uncensored === true,
       };
     });
     models.sort((a, b) => a.name.localeCompare(b.name));
