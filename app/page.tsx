@@ -561,7 +561,7 @@ export default function ChatPage() {
             )}
             {docs.map((d) => (
               <span key={d.id} className="attach-chip wide" title={d.name}>
-                📄 {d.name}
+                <span className="chip-label">📄 {d.name}</span>
                 <button type="button" className="chip-remove" onClick={() => setDocs((p) => p.filter((x) => x.id !== d.id))}>
                   ✕
                 </button>

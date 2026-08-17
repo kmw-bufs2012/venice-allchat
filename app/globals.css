@@ -283,6 +283,14 @@ pre {
   display: inline-flex;
   align-items: center;
   position: relative;
+  flex-shrink: 0;
+}
+
+.chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thumb-video::after {
@@ -329,6 +337,7 @@ pre {
   border-radius: 999px;
   background: var(--border);
   color: var(--heading);
+  flex-shrink: 0;
 }
 
 .note {
