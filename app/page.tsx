@@ -19,6 +19,8 @@ interface TextModelInfo {
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /** Display-only attachment previews kept on the user's sent message. */
+  attachments?: { images: string[]; videoThumb?: string };
 }
 
 interface ImageAttachment {
@@ -109,9 +111,9 @@ async function extractVideoFrames(file: File, count = 6): Promise<string[]> {
 }
 
 function modelLabel(m: TextModelInfo): string {
-  const tag = m.uncensored ? " (무검열)" : "";
+  const tags = `${m.uncensored ? " (무검열)" : ""}${m.supportsVision ? " (LMM)" : ""}`;
   const ctx = m.contextWindow ? ` · ${(m.contextWindow / 1000).toFixed(0)}k` : "";
-  return `${m.name}${tag}${ctx}`;
+  return `${m.name}${tags}${ctx}`;
 }
 
 /**
@@ -141,6 +143,7 @@ export default function ChatPage() {
   const [video, setVideo] = useState<VideoAttachment | null>(null);
   const [docs, setDocs] = useState<DocAttachment[]>([]);
   const [attachBusy, setAttachBusy] = useState(false);
+  const [preview, setPreview] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const imgInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -282,7 +285,16 @@ export default function ChatPage() {
     }
     for (const d of docs) parts.push({ type: "file", file: { file_data: d.dataUrl, filename: d.name } });
 
-    const history = [...messages, { role: "user" as const, content: finalText }];
+    const history: ChatMessage[] = [
+      ...messages,
+      {
+        role: "user",
+        content: finalText,
+        ...(hasAttachments
+          ? { attachments: { images: images.map((i) => i.dataUrl), videoThumb: video?.frames[0] } }
+          : {}),
+      },
+    ];
     setMessages([...history, { role: "assistant", content: "" }]);
     setStreaming(true);
 
@@ -409,6 +421,7 @@ export default function ChatPage() {
         {selected?.traits && selected.traits.length > 0 && (
           <p className="note">{selected.traits.map(traitLabel).join(" · ")}</p>
         )}
+        <p className="note">{selected?.supportsVision ? "👁 LMM — 이미지·동영상(프레임) 이해 가능" : "텍스트 전용 — 이미지 첨부 불가"}</p>
 
         <label htmlFor="system">시스템 프롬프트 (선택)</label>
         <textarea
@@ -440,6 +453,20 @@ export default function ChatPage() {
         )}
         {messages.map((m, i) => (
           <div key={i} className={`bubble ${m.role}`}>
+            {m.attachments && (
+              <div className="bubble-attaches">
+                {m.attachments.images.map((src, j) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={j} src={src} alt="첨부 이미지" onClick={() => setPreview(src)} />
+                ))}
+                {m.attachments.videoThumb && (
+                  <span className="thumb-video" title="동영상 대표 프레임">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={m.attachments.videoThumb} alt="동영상 썸네일" onClick={() => m.attachments?.videoThumb && setPreview(m.attachments.videoThumb)} />
+                  </span>
+                )}
+              </div>
+            )}
             {m.content || (streaming && i === messages.length - 1 ? "…" : "")}
           </div>
         ))}
@@ -510,17 +537,23 @@ export default function ChatPage() {
         {(images.length > 0 || video || docs.length > 0) && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             {images.map((img) => (
-              <span key={img.id} className="attach-chip" title={img.name}>
+              <span key={img.id} className="attach-chip" title={`${img.name} — 클릭하면 크게 보기`}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.dataUrl} alt={img.name} />
+                <img src={img.dataUrl} alt={img.name} onClick={() => setPreview(img.dataUrl)} />
                 <button type="button" className="chip-remove" onClick={() => setImages((p) => p.filter((x) => x.id !== img.id))}>
                   ✕
                 </button>
               </span>
             ))}
             {video && (
-              <span className="attach-chip wide" title={`${video.name} — 프레임 ${video.frames.length}장 추출`}>
-                🎬 {video.name} ({video.frames.length}프레임)
+              <span className="attach-chip" title={`${video.name} — 대표 프레임 ${video.frames.length}장 중 표시`}>
+                <span className="thumb-video">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={video.frames[0]} alt={video.name} onClick={() => video.frames[0] && setPreview(video.frames[0])} />
+                </span>
+                <span className="chip-label">
+                  {video.name} ({video.frames.length}프레임)
+                </span>
                 <button type="button" className="chip-remove" onClick={() => setVideo(null)}>
                   ✕
                 </button>
@@ -584,6 +617,13 @@ export default function ChatPage() {
         {ctxLimit !== null && ` / ${(ctxLimit / 1000).toFixed(0)}k`}
         {nearLimit && " ⚠ 컨텍스트 거의 찼음 — 새 대화를 시작하세요"}
       </p>
+
+      {preview && (
+        <div className="lightbox" onClick={() => setPreview(null)} role="dialog" aria-label="이미지 미리보기">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={preview} alt="미리보기" />
+        </div>
+      )}
     </main>
   );
 }

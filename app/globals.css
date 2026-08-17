@@ -259,6 +259,69 @@ pre {
   padding: 8px 10px;
 }
 
+.bubble-attaches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.bubble-attaches img {
+  max-width: 140px;
+  max-height: 140px;
+  object-fit: cover;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.bubble-attaches img:hover {
+  transform: scale(1.04);
+}
+
+.thumb-video {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+.thumb-video::after {
+  content: "▶";
+  position: absolute;
+  bottom: 4px;
+  left: 4px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+  animation: fadeIn 0.15s ease;
+}
+
+.lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  object-fit: contain;
+  border-radius: 12px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .chip-remove {
   margin-top: 0;
   padding: 0 6px;
